@@ -106,6 +106,21 @@ namespace ni_match_test_detail
     };
 }
 
+namespace ni
+{
+    template <>
+    struct matcher_cast<ni_match_test_detail::base>
+    {
+        template <typename TargetType>
+        static TargetType* apply(ni_match_test_detail::base* b) { return b->cast_to<TargetType>(); }
+
+        template <typename TargetType>
+        static TargetType const* apply(ni_match_test_detail::base const* b) { return b->cast_to<TargetType>(); }
+    };
+
+}
+
+
 TEST( ni_match, match_custom_polymorhic_types )
 {
     using namespace ni_match_test_detail;

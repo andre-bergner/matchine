@@ -82,15 +82,25 @@ namespace ni
 
 
     // this let's ADL kick in for the client code for chosing the right dyn_cast<>
-    template <typename> void dyn_cast();
+    //template <typename> void dyn_cast();
 
+
+    template <typename T>
+    struct matcher_cast
+    {
+        template <typename TargetType>
+        static auto apply(T* p)
+        {
+            return dynamic_cast<TargetType*>(p);
+        }
+    };
 
 
     namespace detail
     {
         // ADL can be quite weird. This SFINAE dispatch helps to find the right function if it exists.
         template <typename TargetType> struct target_type {};
-
+/*
         template <typename TargetType, typename SourceType>
         auto matcher_dyn_cast(meta::try_t, target_type<TargetType>, SourceType* p) -> decltype(dyn_cast<TargetType>(p))
         {
@@ -102,7 +112,7 @@ namespace ni
         {
             return dynamic_cast<TargetType*>(p);
         }
-
+*/
         // Some helper type trait
 
         template <typename Function, typename... Functions>
@@ -207,7 +217,8 @@ namespace ni
         {
             using target_t = std::remove_reference_t<typename signature<Lambda>::template argument<0>::type>;
             // TODO add const if Type has const
-            if (auto* p = matcher_dyn_cast(meta::try_t{}, target_type<target_t>{}, x))
+            //if (auto* p = matcher_dyn_cast(meta::try_t{}, target_type<target_t>{}, x))
+            if (auto* p = matcher_cast<std::decay_t<Type>>::template apply<target_t>(x))
                 return invoker<typename ResultTypeInfo::wrapped_result_t>::apply(l,*p);
             else
                 return matcher_impl<ResultTypeInfo>(x,ls...);

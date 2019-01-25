@@ -382,6 +382,25 @@ namespace type_hierarchy_detail {
 
 }
 
+
+template <typename T>
+struct matcher_cast;
+
+template <typename... Ts>
+struct matcher_cast<type_hierarchy_detail::id_holder<Ts...>>
+{
+    using src_t = type_hierarchy_detail::id_holder<Ts...>;
+
+    template <typename Target>
+    static Target* apply(src_t* p) { return type_hierarchy_detail::dyn_cast<Target>(p); }
+
+    template <typename Target>
+    static Target const* apply(src_t const* p) { return type_hierarchy_detail::dyn_cast<Target>(p); }
+};
+
+
+
+
 namespace type_hierarchy {
 
     template <typename BaseType, int... BitsPerLevel>
