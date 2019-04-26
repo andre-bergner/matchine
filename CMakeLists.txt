@@ -67,6 +67,7 @@ if( MATCHINE_TESTS )
         tests/main.cpp
         tests/match.test.cpp
         tests/match_any.test.cpp
+        tests/match_variant.test.cpp
         tests/meta.test.cpp
         tests/overload.test.cpp
         tests/signature.test.cpp

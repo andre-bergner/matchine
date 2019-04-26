@@ -70,6 +70,11 @@
 
 #include <boost/optional.hpp>
 
+#include <ni/functional/overload.h>
+#include <tuple>
+#include <variant>
+
+
 
 namespace ni
 {
@@ -81,7 +86,7 @@ namespace ni
     //  TargetType* dyn_cast(CustomType* p) { return b->custom_cast<TargetType>(); }
 
 
-    // this let's ADL kick in for the client code for chosing the right dyn_cast<>
+    // this let's ADL kick in for the client code for choosing the right dyn_cast<>
     template <typename> void dyn_cast();
 
 
@@ -177,42 +182,136 @@ namespace ni
         // Actual dispatcher. Possible optimization for long lists use hash-map for O(1) lookup
 
         template <typename ResultTypeInfo, typename Type, typename Lambda, typename... Lambdas>
-        auto matcher_impl(Type* x, Lambda& l, Lambdas&... ls)
+        auto match_by_linear_search(Type* x, Lambda& l, Lambdas&... ls)
         -> std::enable_if_t< signature<Lambda>::number_of_arguments == 1, typename ResultTypeInfo::result_t>;
 
 
         template <typename ResultTypeInfo, typename Type>
-        auto matcher_impl(Type*) -> typename ResultTypeInfo::result_t
+        auto match_by_linear_search(Type*) -> typename ResultTypeInfo::result_t
         {
             return {};
         }
 
         template <typename ResultTypeInfo, typename Type, typename Lambda1, typename Lambda2, typename... Lambdas>
-        auto matcher_impl(Type* x, Lambda1& l1, Lambda2& l2, Lambdas&... ls)
+        auto match_by_linear_search(Type* x, Lambda1& l1, Lambda2& l2, Lambdas&... ls)
         -> std::enable_if_t< signature<Lambda1>::number_of_arguments == 0, typename ResultTypeInfo::result_t>
         {
-            return matcher_impl<ResultTypeInfo>(x,l2,ls...,l1);
+            return match_by_linear_search<ResultTypeInfo>(x,l2,ls...,l1);
         }
 
         template <typename ResultTypeInfo, typename Type, typename Lambda, typename... Lambdas>
-        auto matcher_impl(Type*, Lambda& l)
+        auto match_by_linear_search(Type*, Lambda& l)
         -> std::enable_if_t< signature<Lambda>::number_of_arguments == 0, typename ResultTypeInfo::result_t>
         {
             return invoker<typename ResultTypeInfo::wrapped_result_t>::apply(l);
         }
 
         template <typename ResultTypeInfo, typename Type, typename Lambda, typename... Lambdas>
-        auto matcher_impl(Type* x, Lambda& l, Lambdas&... ls)
+        auto match_by_linear_search(Type* x, Lambda& l, Lambdas&... ls)
         -> std::enable_if_t< signature<Lambda>::number_of_arguments == 1, typename ResultTypeInfo::result_t>
         {
             using target_t = std::remove_reference_t<typename signature<Lambda>::template argument<0>::type>;
-            // TODO add const if Type has const
             if (auto* p = matcher_dyn_cast(meta::try_t{}, target_type<target_t>{}, x))
                 return invoker<typename ResultTypeInfo::wrapped_result_t>::apply(l,*p);
             else
-                return matcher_impl<ResultTypeInfo>(x,ls...);
+                return match_by_linear_search<ResultTypeInfo>(x,ls...);
         }
+
+
+        // Helper to pass overloaded function as object
+        template <typename ResultTypeInfo>
+        struct match_by_linear_search_fwd
+        {
+            template <typename... Args>
+            decltype(auto) operator()(Args&&... args)
+            {
+                return match_by_linear_search<ResultTypeInfo>(std::forward<Args>(args)...);
+            }
+        };
+
+
+        // -------------------------------------------------------------------------------
+        // helpers -- unpack tuple as function arguments
+        // -------------------------------------------------------------------------------
+
+        template <class F, class Tuple, std::size_t... I>
+        constexpr decltype(auto) apply_tuple_impl(F&& f, Tuple&& t, std::index_sequence<I...>)
+        {
+            return std::forward<F>(f)( std::get<I>(std::forward<Tuple>(t))... );
+        }
+
+        template <class F, class Tuple>
+        constexpr decltype(auto) apply_tuple(F&& f, Tuple&& t)
+        {
+            return apply_tuple_impl(
+                std::forward<F>(f), std::forward<Tuple>(t),
+                std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<Tuple>>>{}
+            );
+        }
+
+
+        template <class F, class X, class Tuple, std::size_t... I>
+        constexpr decltype(auto) apply_arg_tuple_impl(F&& f, X&& x, Tuple&& t, std::index_sequence<I...>)
+        {
+            return std::forward<F>(f)( std::forward<X>(x), std::get<I>(std::forward<Tuple>(t))... );
+        }
+
+        template <class F, class X, class Tuple>
+        constexpr decltype(auto) apply_arg_tuple(F&& f, X&& x, Tuple&& t)
+        {
+            return apply_arg_tuple_impl(
+                std::forward<F>(f), std::forward<X>(x), std::forward<Tuple>(t),
+                std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<Tuple>>>{}
+            );
+        }
+
+
+        template <typename... Lambdas>
+        struct matcher_impl
+        {
+            std::tuple<Lambdas...> matches;
+
+            template <typename X>
+            decltype(auto) operator()(X&& x)
+            {
+                static_assert(
+                    meta::fold_and_v<
+                        (   (signature<Lambdas>::number_of_arguments == 0)
+                        or  (signature<Lambdas>::number_of_arguments == 1)
+                        )...
+                    >
+                    , "Can only match on lambdas with one argument."
+                );
+
+                using result_info_t = ::ni::detail::result_type_info<Lambdas...>;
+
+                constexpr auto num_args = result_info_t::sum_of_arguments;
+                static_assert(
+                    num_args == sizeof...(Lambdas) or num_args == sizeof...(Lambdas) - 1
+                    , "There can be only one default value defined per matcher."
+                );
+                using result_info_t = result_type_info<Lambdas...>;
+                return apply_arg_tuple( match_by_linear_search_fwd<result_info_t>{}, &x, matches );
+            }
+
+
+            // std::variant entry point
+            template <typename... Ts>
+            decltype(auto) operator()(std::variant<Ts...> const& var)
+            {
+                return std::visit(apply_tuple(overload<Lambdas&...>, matches), var);
+            }
+
+            template <typename... Ts>
+            decltype(auto) operator()(std::variant<Ts...>& var)
+            {
+                return std::visit(apply_tuple(overload<Lambdas&...>, matches), var);
+            }
+        };
     }
+
+
+    // -----------------------------------------------------------------------------------
 
     template <typename Value>
     auto otherwise(Value value)
@@ -220,33 +319,17 @@ namespace ni
         return [value=std::move(value)]{ return value; };
     }
 
-
+    // -----------------------------------------------------------------------------------
+ 
     template <typename... Lambdas>
     auto matcher(Lambdas&&... lambdas)
     {
-        static_assert(
-            meta::fold_and_v<
-                (   (signature<Lambdas>::number_of_arguments == 0)
-                or  (signature<Lambdas>::number_of_arguments == 1)
-                )...
-            >
-            , "Can only match on lambdas with one argument."
-        );
-
-        using result_info_t = ::ni::detail::result_type_info<Lambdas...>;
-
-        constexpr auto num_args = result_info_t::sum_of_arguments;
-        static_assert(
-            num_args == sizeof...(Lambdas) or num_args == sizeof...(Lambdas) - 1
-            , "There can be only one default value defined per matcher."
-        );
-
-        return [=](auto& x) -> typename result_info_t::result_t
-        {
-            return ::ni::detail::matcher_impl<result_info_t>(&x, lambdas...);
+        return detail::matcher_impl<std::decay_t<Lambdas>...>{
+            { std::forward<Lambdas>(lambdas)... }
         };
     }
 
+    // -----------------------------------------------------------------------------------
 
     template <typename Type>
     auto match(Type&& x)
