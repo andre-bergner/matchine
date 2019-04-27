@@ -89,6 +89,11 @@ namespace ni
     // this let's ADL kick in for the client code for choosing the right dyn_cast<>
     template <typename> void dyn_cast();
 
+    struct wildcard
+    {
+        wildcard() = default;
+        template <class T> constexpr wildcard(T&&) {}
+    };
 
 
     namespace detail
@@ -129,18 +134,23 @@ namespace ni
         };
 
 
+        template <typename F>
+        static constexpr bool is_unmatched_case =
+            std::is_same<wildcard, typename signature<F>::template argument<0>::type>::value;
+
+
         template <typename... Functions>
         struct result_type_info
         {
-            static constexpr size_t sum_of_arguments = meta::fold_add_v<size_t, signature<Functions>::number_of_arguments...>;
+            static constexpr bool contains_wildcard = meta::fold_or_v<is_unmatched_case<Functions>...>;
             using wrapped_result_t = typename result<Functions...>::type;
             using result_t = std::conditional_t
             <   std::is_same<void,wrapped_result_t>::value
             ,   bool
             ,   std::conditional_t
-                <   sum_of_arguments == size_t(sizeof...(Functions))
-                ,   boost::optional<wrapped_result_t>
+                <   contains_wildcard
                 ,   wrapped_result_t
+                ,   boost::optional<wrapped_result_t>
                 >
             >;
         };
@@ -149,41 +159,31 @@ namespace ni
         template <typename ResultType>
         struct invoker
         {
-            template <typename Function>
-            static decltype(auto) apply(Function& f)
-            {
-                return f();
-            }
-
             template <typename Function, typename Arg>
-            static decltype(auto) apply(Function& f, Arg& a)
+            static decltype(auto) apply(Function& f, Arg&& a)
             {
-                return f(a);
+                return f(std::forward<Arg>(a));
             }
         };
 
         template <>
         struct invoker<void>
         {
-            template <typename Function>
-            static decltype(auto) apply(Function& f)
-            {
-                return f(), true;
-            }
-
             template <typename Function, typename Arg>
-            static decltype(auto) apply(Function& f, Arg& a)
+            static decltype(auto) apply(Function& f, Arg&& a)
             {
-                return f(a), true;
+                return f(std::forward<Arg>(a)), true;
             }
         };
 
 
+        // -------------------------------------------------------------------------------
         // Actual dispatcher. Possible optimization for long lists use hash-map for O(1) lookup
+        // -------------------------------------------------------------------------------
 
         template <typename ResultTypeInfo, typename Type, typename Lambda, typename... Lambdas>
         auto match_by_linear_search(Type* x, Lambda& l, Lambdas&... ls)
-        -> std::enable_if_t< signature<Lambda>::number_of_arguments == 1, typename ResultTypeInfo::result_t>;
+        -> std::enable_if_t< !is_unmatched_case<Lambda>, typename ResultTypeInfo::result_t>;
 
 
         template <typename ResultTypeInfo, typename Type>
@@ -194,21 +194,21 @@ namespace ni
 
         template <typename ResultTypeInfo, typename Type, typename Lambda1, typename Lambda2, typename... Lambdas>
         auto match_by_linear_search(Type* x, Lambda1& l1, Lambda2& l2, Lambdas&... ls)
-        -> std::enable_if_t< signature<Lambda1>::number_of_arguments == 0, typename ResultTypeInfo::result_t>
+        -> std::enable_if_t< is_unmatched_case<Lambda1>, typename ResultTypeInfo::result_t>
         {
             return match_by_linear_search<ResultTypeInfo>(x,l2,ls...,l1);
         }
 
         template <typename ResultTypeInfo, typename Type, typename Lambda, typename... Lambdas>
         auto match_by_linear_search(Type*, Lambda& l)
-        -> std::enable_if_t< signature<Lambda>::number_of_arguments == 0, typename ResultTypeInfo::result_t>
+        -> std::enable_if_t< is_unmatched_case<Lambda>, typename ResultTypeInfo::result_t>
         {
-            return invoker<typename ResultTypeInfo::wrapped_result_t>::apply(l);
+            return invoker<typename ResultTypeInfo::wrapped_result_t>::apply(l, wildcard{});
         }
 
         template <typename ResultTypeInfo, typename Type, typename Lambda, typename... Lambdas>
         auto match_by_linear_search(Type* x, Lambda& l, Lambdas&... ls)
-        -> std::enable_if_t< signature<Lambda>::number_of_arguments == 1, typename ResultTypeInfo::result_t>
+        -> std::enable_if_t< !is_unmatched_case<Lambda>, typename ResultTypeInfo::result_t>
         {
             using target_t = std::remove_reference_t<typename signature<Lambda>::template argument<0>::type>;
             if (auto* p = matcher_dyn_cast(meta::try_t{}, target_type<target_t>{}, x))
@@ -275,21 +275,15 @@ namespace ni
             decltype(auto) operator()(X&& x)
             {
                 static_assert(
-                    meta::fold_and_v<
-                        (   (signature<Lambdas>::number_of_arguments == 0)
-                        or  (signature<Lambdas>::number_of_arguments == 1)
-                        )...
-                    >
-                    , "Can only match on lambdas with one argument."
+                    meta::fold_and_v<(signature<Lambdas>::number_of_arguments == 1)...>,
+                    "Can only match on lambdas with one argument."
                 );
 
-                using result_info_t = ::ni::detail::result_type_info<Lambdas...>;
-
-                constexpr auto num_args = result_info_t::sum_of_arguments;
+                constexpr auto num_wildcards = meta::fold_and_v<(is_unmatched_case<Lambdas>?1:0)...>;
                 static_assert(
-                    num_args == sizeof...(Lambdas) or num_args == sizeof...(Lambdas) - 1
-                    , "There can be only one default value defined per matcher."
+                    num_wildcards <= 1, "There can be only one default value defined per matcher."
                 );
+
                 using result_info_t = result_type_info<Lambdas...>;
                 return apply_arg_tuple( match_by_linear_search_fwd<result_info_t>{}, &x, matches );
             }
@@ -316,7 +310,7 @@ namespace ni
     template <typename Value>
     auto otherwise(Value value)
     {
-        return [value=std::move(value)]{ return value; };
+        return [value=std::move(value)](wildcard){ return value; };
     }
 
     // -----------------------------------------------------------------------------------

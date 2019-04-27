@@ -144,7 +144,6 @@ TEST( ni_match, match_with_otherwise_value )
     (   [](derived1& x) { return x.value1 + 1; }
     ,   [](derived2& x) { return x.value2 + 2; }
     ,   ni::otherwise(-1)
-    //,   []{ return -1; }      // this also works
     );
 
     static_assert(

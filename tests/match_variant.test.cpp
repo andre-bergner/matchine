@@ -25,8 +25,7 @@ TEST( ni_match, match_variant )
     (   [](int x)     { return int(x) + 1; }
     ,   [](double x)  { return int(x) + 2; }
     ,   [](TheAnswer) { return 42; }
-    ,   [](auto)      { return -1; }
-    //,   ni::otherwise(-1)  // does not work for variant, yet
+    ,   ni::otherwise(-1)
     );
 
     var = 1336;

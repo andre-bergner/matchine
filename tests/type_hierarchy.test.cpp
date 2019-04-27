@@ -175,7 +175,7 @@ TEST_F(TypeHierarchyTest, match_flat)
         ,   [&](Type_2_1)      { rec("2_1"); }
         ,   [&](Type_2_2)      { rec("2_2"); }
         ,   [&](Type_2)        { rec("2"); }
-        ,   [&]{ rec("fail"); }
+        ,   [&](ni::wildcard)  { rec("fail"); }
         );
     }
 
@@ -201,21 +201,21 @@ TEST_F(TypeHierarchyTest, match_matching_hierachies)
                         ni::match(r)
                         (   [&](Type_1_1_1&){ rec("1_1_1"); }
                         ,   [&](Type_1_1_2&){ rec("1_1_2"); }
-                        ,   [&]{ rec("1_1"); }
+                        ,   [&](ni::wildcard){ rec("1_1"); }
                         );
                     }
                 ,   [&](Type_1_2&){ rec("1_2"); }
-                ,   [&]{ rec("1"); }
+                ,   [&](ni::wildcard){ rec("1"); }
                 );
             }
         ,   [&](Type_2& r){
                 ni::match(r)
                 (   [&](Type_2_1&){ rec("2_1"); }
                 ,   [&](Type_2_2&){ rec("2_2"); }
-                ,   [&]{ rec("2"); }
+                ,   [&](ni::wildcard){ rec("2"); }
                 );
             }
-        ,   [&]{ rec("fail"); }
+        ,   [&](ni::wildcard){ rec("fail"); }
         );
     }
 

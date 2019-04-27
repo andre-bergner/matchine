@@ -21,7 +21,7 @@ TEST( ni_match, match_any )
     auto m = ni::matcher
     (   [](int x)    { return int(x) + 1; }
     ,   [](double x) { return int(x) + 2; }
-    ,   []           { return -42; }
+    ,   ni::otherwise(-42)
     );
 
     EXPECT_EQ( -42, m(any) );
